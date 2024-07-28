@@ -1,3 +1,5 @@
+#dual channel
+
 import soundfile as sf      #https://github.com/bastibe/python-soundfile
 import pandas as pd
 import numpy as np
