@@ -126,12 +126,12 @@ model = song(input_size, hidden_size, batch_size, num_layers).to(device)
 # Model Hyperparameters
 epochs = 20
 clip_value = 0.7 # Gradient clipping value
-learning_rate = 0.9
+learning_rate = 0.6
 
 # Define loss function and optimizer
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=2)
+scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.6, patience=0)
 
 
 for epoch in range(epochs):
