@@ -68,7 +68,7 @@ dataLoader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
 input_size = 1
 hidden_size = 800
-num_layers = 8
+num_layers = 2
 
 class song(nn.Module):
     def __init__(self, input_size, hidden_size, batch_size, num_layers):
@@ -106,8 +106,8 @@ class song(nn.Module):
        # print(x.shape)
 
         x = x.permute(1,0)
-        x1 = F.relu(self.convSmol(x))
-        x1 = F.relu(self.convLarge(x1))
+        x1 = F.leaky_relu(self.convSmol(x))
+        x1 = F.leaky_relu(self.convLarge(x1))
         x1 = x1.permute(1,0)
         x1, _ = self.LSTM(x1, (h0, c0)) 
         x1 = self.bn1d(x1)
@@ -124,14 +124,15 @@ class song(nn.Module):
 model = song(input_size, hidden_size, batch_size, num_layers).to(device)
 
 # Model Hyperparameters
-epochs = 10
+epochs = 20
 clip_value = 0.7 # Gradient clipping value
 learning_rate = 0.9
 
 # Define loss function and optimizer
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.5, total_iters=epochs)
+scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.8, patience=2)
+
 
 for epoch in range(epochs):
     model.train()
@@ -154,7 +155,7 @@ for epoch in range(epochs):
         total_loss +=loss.item()
 
     before_lr = optimizer.param_groups[0]["lr"]
-    scheduler.step()
+    scheduler.step(loss)
     after_lr = optimizer.param_groups[0]["lr"]
 
     # Print gradient norms
