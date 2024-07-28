@@ -6,6 +6,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
+import torch.optim.lr_scheduler as lr_scheduler
 
 #Indecees of start and end values of a array. 
 startIdx = 10000
@@ -13,6 +14,7 @@ endIdx = 20000
 
 #define column names
 col0 = "0"
+col1 = "1"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Device is ", device)
@@ -65,10 +67,8 @@ batch_size = 64
 dataLoader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
 input_size = 1
-hidden_size = 600
-num_layers = 12
-learning_rate = 0.001
-
+hidden_size = 800
+num_layers = 8
 
 class song(nn.Module):
     def __init__(self, input_size, hidden_size, batch_size, num_layers):
@@ -83,7 +83,11 @@ class song(nn.Module):
         self.convSmol = nn.Conv1d(in_channels = input_size, out_channels = hidden_size,kernel_size = 2, padding = "same")  
         self.convLarge = nn.Conv1d(in_channels = hidden_size, out_channels = hidden_size,kernel_size = 16, padding = "same")  
         self.LSTM = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=num_layers,batch_first = True)
-
+        self.Long_LSTM = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size*2, num_layers=num_layers,batch_first = True)
+        self.avgpool = nn.AvgPool1d(kernel_size = 2, stride = 2)
+        self.bn1d = nn.BatchNorm1d(hidden_size)
+        self.bn1dDouble = nn.BatchNorm1d(hidden_size*2)
+        
         self.endNote1 = nn.Linear(hidden_size, 1)
 
         self.float()
@@ -92,7 +96,10 @@ class song(nn.Module):
 
         h0 = torch.zeros(self.num_layers, self.hidden_size).float().to(device)
         c0 = torch.zeros(self.num_layers, self.hidden_size).float().to(device)
+        h1 = torch.zeros(self.num_layers, self.hidden_size*2).float().to(device)
+        c1 = torch.zeros(self.num_layers, self.hidden_size*2).float().to(device)
         
+
         #TODO - eddit architecture to be something more robust
         #TODO - add nonlinearities as required
 
@@ -102,7 +109,12 @@ class song(nn.Module):
         x1 = F.relu(self.convSmol(x))
         x1 = F.relu(self.convLarge(x1))
         x1 = x1.permute(1,0)
-        x1, _ = self.LSTM(x1, (h0, c0))              
+        x1, _ = self.LSTM(x1, (h0, c0)) 
+        x1 = self.bn1d(x1)
+        x1, _ = self.Long_LSTM(x1, (h1, c1)) 
+        x1 = self.bn1dDouble(x1)
+        x1 = self.avgpool(x1)
+                     
 
         x1 = self.endNote1(x1)
         outputs = x1
@@ -111,13 +123,15 @@ class song(nn.Module):
 # Instantiate the model and move it to the GPU
 model = song(input_size, hidden_size, batch_size, num_layers).to(device)
 
+# Model Hyperparameters
+epochs = 10
+clip_value = 0.7 # Gradient clipping value
+learning_rate = 0.9
+
 # Define loss function and optimizer
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-
-# Training
-epochs = 12
-clip_value = 1 # Gradient clipping value
+scheduler = lr_scheduler.LinearLR(optimizer, start_factor=1.0, end_factor=0.5, total_iters=epochs)
 
 for epoch in range(epochs):
     model.train()
@@ -130,9 +144,7 @@ for epoch in range(epochs):
         label1s = label1.unsqueeze(-1).to(torch.float32).to(device)
 
         optimizer.zero_grad()
-
         outputs1 = model(times)
-
         loss = criterion(outputs1, label1s)
         loss.backward()
         
@@ -140,6 +152,10 @@ for epoch in range(epochs):
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip_value)
         optimizer.step()
         total_loss +=loss.item()
+
+    before_lr = optimizer.param_groups[0]["lr"]
+    scheduler.step()
+    after_lr = optimizer.param_groups[0]["lr"]
 
     # Print gradient norms
     total_norm = 0
@@ -160,6 +176,8 @@ for epoch in range(epochs):
     if (epoch + 1) % 1 == 0:  # Print every epoch
         print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}, Gradient Norm: {total_norm:.4f}")
         print(f'Error for column 1 is = {accuracy_column1:.2f}%')
+        print(f"Before update: {before_lr}, after update {after_lr}")
+        print("\n")
         
 
 
