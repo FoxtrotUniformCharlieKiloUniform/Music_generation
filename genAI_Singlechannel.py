@@ -125,13 +125,18 @@ model = song(input_size, hidden_size, batch_size, num_layers).to(device)
 
 # Model Hyperparameters
 epochs = 20
-clip_value = 0.7 # Gradient clipping value
-learning_rate = 0.6
+clip_value = 0.3 # Gradient clipping value
+learning_rate = 0.8       #best run: 0.6
+end_grad = 0.0001
+
+clip_eq_x = ((1-end_grad) * clip_value)/(1-epochs)*6
+clip_eq_b = (1-end_grad)
+print(f"{clip_eq_x} is clip equation x value, should be -0.036805, clip value b is {clip_eq_b}")
 
 # Define loss function and optimizer
 criterion = nn.MSELoss()
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.6, patience=0)
+scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=0)
 
 
 for epoch in range(epochs):
@@ -150,6 +155,7 @@ for epoch in range(epochs):
         loss.backward()
         
         # Gradient clipping
+        clip_value = clip_eq_x * epoch + clip_eq_b
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip_value)
         optimizer.step()
         total_loss +=loss.item()
