@@ -31,10 +31,10 @@ col1 = "1"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Device is ", device)
-torch.manual_seed(123)
+torch.manual_seed(0)
 
 #get song from .wav
-data, samplerate = sf.read(r"C:\Users\Matt\Documents\Pytorch_ML\Generative\music_example.wav")
+data, samplerate = sf.read(r"C:\Users\Matt\Documents\Pytorch_ML\Generative\lofi-orchestra-162306.wav")
 a_before_splitting = pd.DataFrame(data, columns = [col0, col1])
 
 a = a_before_splitting.mean(axis = 0)
@@ -93,15 +93,28 @@ class song(nn.Module):
         self.batch_size = batch_size
 
 
-        self.convSmol = nn.Conv1d(in_channels=input_size, out_channels=hidden_size, kernel_size=2, padding='same')
-        self.convLarge = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=4, padding='same')
+        # Convolutional layers
+        self.conv1 = nn.Conv1d(in_channels=input_size, out_channels=hidden_size, kernel_size=3, padding='same')
+        self.conv2 = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=5, padding='same')
+        self.conv3 = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=7, padding='same')
+        self.conv4 = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=9, padding='same')
+        self.conv5 = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=11, padding='same')
 
-        self.LSTM = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
-        self.Long_LSTM = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size * 2, num_layers=num_layers, batch_first=True)
-        self.avgpool = nn.AvgPool1d(kernel_size=2, stride=2)
+        # LSTM layers
+        self.LSTM1 = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
+        self.LSTM2 = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size*2, num_layers=num_layers, batch_first=True)
+
+        # Fully connected layers
+        self.fc1 = nn.Linear(hidden_size, hidden_size // 2)
+        self.fc2 = nn.Linear(hidden_size // 2, hidden_size // 4)
+        self.fc3 = nn.Linear(hidden_size // 4, 1)
+
+        self.dropout = nn.Dropout(p=0.5)
         self.bn1d = nn.BatchNorm1d(hidden_size)
-        self.bn1dDouble = nn.BatchNorm1d(hidden_size * 2)
-        
+        self.bn1dDouble = nn.BatchNorm1d(hidden_size*2)
+
+        self.avgpool = nn.AvgPool1d(kernel_size = 2, stride = 2)
+
         self.endNote1 = nn.Linear(hidden_size, 1)
 
     def forward(self, x):
@@ -112,22 +125,29 @@ class song(nn.Module):
 
         #print(x)
         x = x.permute(1, 0)
-        x1 = F.relu(self.convSmol(x))
-        x2 = F.relu(self.convLarge(x1))
+        x1 = F.relu(self.conv1(x))
+        x2 = F.relu(self.conv2(x1))
+        x3 = F.relu(self.conv3(x2))
+        x4 = F.relu(self.conv4(x3))
+        x5 = F.relu(self.conv5(x4))
+        
         
         # Residual connection
-        x_residual = x + x2
+        x_residual = x + x5
 
-        x_residual = x_residual.permute(1, 0)
-        x_residual, _ = self.LSTM(x_residual, (h0, c0))
-        x_residual = self.bn1d(x_residual)
+        x = x_residual.permute(1, 0)
+        x, _ = self.LSTM1(x, (h0, c0))
+        x = self.bn1d(x)
         
-        x_residual, _ = self.Long_LSTM(x_residual, (h1, c1))
-        x_residual = self.bn1dDouble(x_residual)
-        x_residual = self.avgpool(x_residual)
+        x, _ = self.LSTM2(x, (h1, c1))
+        x = self.bn1dDouble(x)
+        x = self.avgpool(x)
 
-        x_residual = self.endNote1(x_residual)
-        outputs = x_residual
+        x = F.relu(self.fc1(x))
+        x = F.relu(self.fc2(x))
+        x = F.relu(self.fc3(x))
+
+        outputs = x
         return outputs
 
 # Instantiate the model and move it to the GPU
