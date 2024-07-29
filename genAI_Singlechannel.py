@@ -7,6 +7,19 @@ import torch.nn.functional as F
 import torch.optim as optim
 from torch.utils.data import Dataset, DataLoader
 import torch.optim.lr_scheduler as lr_scheduler
+import math
+
+def scinot(num):
+    #print scientific notation
+    if num == 0:
+        print("0.0e+0")
+    else:
+        exponent = int(math.log10(abs(num)))
+        coefficient = num / 10**exponent
+        #print(f"{coefficient}")
+    return f"{coefficient:.1e}, e: {exponent}"
+
+
 
 #Indecees of start and end values of a array. 
 startIdx = 10000
@@ -18,6 +31,7 @@ col1 = "1"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Device is ", device)
+torch.manual_seed(123)
 
 #get song from .wav
 data, samplerate = sf.read(r"C:\Users\Matt\Documents\Pytorch_ML\Generative\music_example.wav")
@@ -63,80 +77,71 @@ class TimeSeriesDatasetCreate(Dataset):
 dataset = TimeSeriesDataset(a)
 
 # Create the DataLoader
-batch_size = 64
+batch_size = 32
 dataLoader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
 input_size = 1
-hidden_size = 800
+hidden_size = 1000
 num_layers = 2
 
 class song(nn.Module):
     def __init__(self, input_size, hidden_size, batch_size, num_layers):
-        #variables
         super(song, self).__init__()
         self.input_size = input_size
         self.hidden_size = hidden_size
         self.num_layers = num_layers
         self.batch_size = batch_size
 
-        #layers
-        self.convSmol = nn.Conv1d(in_channels = input_size, out_channels = hidden_size,kernel_size = 2, padding = "same")  
-        self.convLarge = nn.Conv1d(in_channels = hidden_size, out_channels = hidden_size,kernel_size = 16, padding = "same")  
-        self.LSTM = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=num_layers,batch_first = True)
-        self.Long_LSTM = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size*2, num_layers=num_layers,batch_first = True)
-        self.avgpool = nn.AvgPool1d(kernel_size = 2, stride = 2)
+
+        self.convSmol = nn.Conv1d(in_channels=input_size, out_channels=hidden_size, kernel_size=2, padding='same')
+        self.convLarge = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=4, padding='same')
+
+        self.LSTM = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
+        self.Long_LSTM = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size * 2, num_layers=num_layers, batch_first=True)
+        self.avgpool = nn.AvgPool1d(kernel_size=2, stride=2)
         self.bn1d = nn.BatchNorm1d(hidden_size)
-        self.bn1dDouble = nn.BatchNorm1d(hidden_size*2)
+        self.bn1dDouble = nn.BatchNorm1d(hidden_size * 2)
         
         self.endNote1 = nn.Linear(hidden_size, 1)
 
-        self.float()
-
     def forward(self, x):
-
         h0 = torch.zeros(self.num_layers, self.hidden_size).float().to(device)
         c0 = torch.zeros(self.num_layers, self.hidden_size).float().to(device)
         h1 = torch.zeros(self.num_layers, self.hidden_size*2).float().to(device)
         c1 = torch.zeros(self.num_layers, self.hidden_size*2).float().to(device)
+
+        #print(x)
+        x = x.permute(1, 0)
+        x1 = F.relu(self.convSmol(x))
+        x2 = F.relu(self.convLarge(x1))
         
+        # Residual connection
+        x_residual = x + x2
 
-        #TODO - eddit architecture to be something more robust
-        #TODO - add nonlinearities as required
+        x_residual = x_residual.permute(1, 0)
+        x_residual, _ = self.LSTM(x_residual, (h0, c0))
+        x_residual = self.bn1d(x_residual)
+        
+        x_residual, _ = self.Long_LSTM(x_residual, (h1, c1))
+        x_residual = self.bn1dDouble(x_residual)
+        x_residual = self.avgpool(x_residual)
 
-       # print(x.shape)
-
-        x = x.permute(1,0)
-        x1 = F.leaky_relu(self.convSmol(x))
-        x1 = F.leaky_relu(self.convLarge(x1))
-        x1 = x1.permute(1,0)
-        x1, _ = self.LSTM(x1, (h0, c0)) 
-        x1 = self.bn1d(x1)
-        x1, _ = self.Long_LSTM(x1, (h1, c1)) 
-        x1 = self.bn1dDouble(x1)
-        x1 = self.avgpool(x1)
-                     
-
-        x1 = self.endNote1(x1)
-        outputs = x1
+        x_residual = self.endNote1(x_residual)
+        outputs = x_residual
         return outputs
 
 # Instantiate the model and move it to the GPU
 model = song(input_size, hidden_size, batch_size, num_layers).to(device)
 
 # Model Hyperparameters
-epochs = 20
-clip_value = 0.3 # Gradient clipping value
-learning_rate = 0.8       #best run: 0.6
-end_grad = 0.0001
+epochs = 50
+clip_value = 0.1 # Gradient clipping value
+learning_rate = 0.001       #best run: 0.6
 
-clip_eq_x = ((1-end_grad) * clip_value)/(1-epochs)*6
-clip_eq_b = (1-end_grad)
-print(f"{clip_eq_x} is clip equation x value, should be -0.036805, clip value b is {clip_eq_b}")
-
-# Define loss function and optimizer
-criterion = nn.MSELoss()
+# Define loss function and optimizer    
+criterion = nn.HuberLoss(delta = 1)
 optimizer = optim.Adam(model.parameters(), lr=learning_rate)
-scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=0)
+scheduler = lr_scheduler.ReduceLROnPlateau(optimizer, mode='min', factor=0.5, patience=1)
 
 
 for epoch in range(epochs):
@@ -155,13 +160,13 @@ for epoch in range(epochs):
         loss.backward()
         
         # Gradient clipping
-        clip_value = clip_eq_x * epoch + clip_eq_b
+        clip_value = clip_value
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip_value)
         optimizer.step()
         total_loss +=loss.item()
 
     before_lr = optimizer.param_groups[0]["lr"]
-    scheduler.step(loss)
+    scheduler.step(total_loss)
     after_lr = optimizer.param_groups[0]["lr"]
 
     # Print gradient norms
@@ -182,8 +187,8 @@ for epoch in range(epochs):
 
     if (epoch + 1) % 1 == 0:  # Print every epoch
         print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}, Gradient Norm: {total_norm:.4f}")
-        print(f'Error for column 1 is = {accuracy_column1:.2f}%')
-        print(f"Before update: {before_lr}, after update {after_lr}")
+        print(f'Error for column 1 is = {accuracy_column1:.2f}% (scientific notation:',scinot(accuracy_column1),')')
+        print(f"Learning rate before update: {before_lr}, after update {after_lr}")
         print("\n")
         
 
@@ -222,9 +227,6 @@ with torch.no_grad():
     print("\n")
     print(f'Error for column 1 is = {accuracy_column1:.2f}%')
     print("\n")
-    
-
-
 
 
 
