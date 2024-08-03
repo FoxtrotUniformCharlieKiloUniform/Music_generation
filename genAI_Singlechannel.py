@@ -23,7 +23,7 @@ def scinot(num):
 
 #Indecees of start and end values of a array. 
 startIdx = 10000
-endIdx = 20000     
+endIdx = 50000     
 
 #define column names
 col0 = "0"
@@ -31,7 +31,7 @@ col1 = "1"
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 print("Device is ", device)
-torch.manual_seed(0)
+torch.manual_seed(123)
 
 #get song from .wav
 data, samplerate = sf.read(r"C:\Users\Matt\Documents\Pytorch_ML\Generative\lofi-orchestra-162306.wav")
@@ -58,7 +58,7 @@ class TimeSeriesDataset(Dataset):
     def __getitem__(self, idx):
         col = self.data.iloc[idx,:]
         #print(f"col 0 is {col[0]}, col 1 is {col[1]}")#, col 2 is {col[2]}")
-        label = torch.tensor(col[0]).float().to(device)
+        label = torch.tensor(col.iloc[0]).float().to(device)
         return idx, label
     
     
@@ -77,11 +77,11 @@ class TimeSeriesDatasetCreate(Dataset):
 dataset = TimeSeriesDataset(a)
 
 # Create the DataLoader
-batch_size = 32
+batch_size = 16
 dataLoader = DataLoader(dataset, batch_size=batch_size, shuffle=False)
 
 input_size = 1
-hidden_size = 1000
+hidden_size = 500
 num_layers = 2
 
 class song(nn.Module):
@@ -92,69 +92,58 @@ class song(nn.Module):
         self.num_layers = num_layers
         self.batch_size = batch_size
 
+        self.conv1 = nn.Conv1d(in_channels=input_size, out_channels=hidden_size, kernel_size=2, padding='same')
+        self.conv2 = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=4, padding='same')
+        self.conv3 = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=16, padding='same')
 
-        # Convolutional layers
-        self.conv1 = nn.Conv1d(in_channels=input_size, out_channels=hidden_size, kernel_size=3, padding='same')
-        self.conv2 = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=5, padding='same')
-        self.conv3 = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=7, padding='same')
-        self.conv4 = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=9, padding='same')
-        self.conv5 = nn.Conv1d(in_channels=hidden_size, out_channels=hidden_size, kernel_size=11, padding='same')
+        self.avgpool = nn.AdaptiveAvgPool1d(1)
 
-        # LSTM layers
-        self.LSTM1 = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
-        self.LSTM2 = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size*2, num_layers=num_layers, batch_first=True)
+        #self.LSTM1 = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
+        self.LSTM1 = nn.LSTM(input_size=batch_size, hidden_size=hidden_size, num_layers=num_layers, batch_first=True)
+        self.LSTM2 = nn.LSTM(input_size=hidden_size, hidden_size=hidden_size * 2, num_layers=num_layers, batch_first=True)
+        self.LSTM3 = nn.LSTM(input_size=hidden_size*2, hidden_size=hidden_size * 4, num_layers=num_layers, batch_first=True)
 
-        # Fully connected layers
-        self.fc1 = nn.Linear(hidden_size, hidden_size // 2)
-        self.fc2 = nn.Linear(hidden_size // 2, hidden_size // 4)
-        self.fc3 = nn.Linear(hidden_size // 4, 1)
-
-        self.dropout = nn.Dropout(p=0.5)
-        self.bn1d = nn.BatchNorm1d(hidden_size)
-        self.bn1dDouble = nn.BatchNorm1d(hidden_size*2)
-
-        self.avgpool = nn.AvgPool1d(kernel_size = 2, stride = 2)
-
-        self.endNote1 = nn.Linear(hidden_size, 1)
+        
+        self.midLin = nn.Linear(hidden_size * 4, 100)
+        self.endNote1 = nn.Linear(100, 1)
 
     def forward(self, x):
         h0 = torch.zeros(self.num_layers, self.hidden_size).float().to(device)
         c0 = torch.zeros(self.num_layers, self.hidden_size).float().to(device)
         h1 = torch.zeros(self.num_layers, self.hidden_size*2).float().to(device)
         c1 = torch.zeros(self.num_layers, self.hidden_size*2).float().to(device)
+        h2 = torch.zeros(self.num_layers, self.hidden_size*4).float().to(device)
+        c2 = torch.zeros(self.num_layers, self.hidden_size*4).float().to(device)
 
-        #print(x)
         x = x.permute(1, 0)
         x1 = F.relu(self.conv1(x))
         x2 = F.relu(self.conv2(x1))
         x3 = F.relu(self.conv3(x2))
-        x4 = F.relu(self.conv4(x3))
-        x5 = F.relu(self.conv5(x4))
+        x3 = x3.permute(1,0)
+        x4 = self.avgpool(x3)
+        x4 = x4.permute(1,0)
         
-        
+
         # Residual connection
-        x_residual = x + x5
+        x_residual = x + x4
 
-        x = x_residual.permute(1, 0)
-        x, _ = self.LSTM1(x, (h0, c0))
-        x = self.bn1d(x)
+        #x_residual = x_residual.permute(1, 0)
+        x_residual, _ = self.LSTM1(x_residual, (h0, c0))
+        x_residual, _ = self.LSTM2(x_residual, (h1, c1))
+        x_residual, _ = self.LSTM3(x_residual, (h2, c2))
+
+        x_residual = self.midLin(x_residual)
+
+        x_residual = self.endNote1(x_residual)
+        outputs = x_residual
         
-        x, _ = self.LSTM2(x, (h1, c1))
-        x = self.bn1dDouble(x)
-        x = self.avgpool(x)
-
-        x = F.relu(self.fc1(x))
-        x = F.relu(self.fc2(x))
-        x = F.relu(self.fc3(x))
-
-        outputs = x
         return outputs
 
 # Instantiate the model and move it to the GPU
 model = song(input_size, hidden_size, batch_size, num_layers).to(device)
 
 # Model Hyperparameters
-epochs = 50
+epochs = 10
 clip_value = 0.1 # Gradient clipping value
 learning_rate = 0.001       #best run: 0.6
 
@@ -175,7 +164,9 @@ for epoch in range(epochs):
         label1s = label1.unsqueeze(-1).to(torch.float32).to(device)
 
         optimizer.zero_grad()
+
         outputs1 = model(times)
+        #print(f"DEBUG: outputs shape is {outputs1.shape}, inputs shape is {times.shape}")
         loss = criterion(outputs1, label1s)
         loss.backward()
         
@@ -183,7 +174,7 @@ for epoch in range(epochs):
         clip_value = clip_value
         torch.nn.utils.clip_grad_norm_(model.parameters(), clip_value)
         optimizer.step()
-        total_loss +=loss.item()
+        total_loss += loss.item()
 
     before_lr = optimizer.param_groups[0]["lr"]
     scheduler.step(total_loss)
@@ -192,7 +183,10 @@ for epoch in range(epochs):
     # Print gradient norms
     total_norm = 0
     total = 0
+    print(model.parameters())
+
     for p in model.parameters():
+        #print(p)
         param_norm = p.grad.detach().data.norm(2)
         total_norm += param_norm.item() ** 2
     
@@ -254,9 +248,9 @@ with torch.no_grad():
 
 print("_____________CREATING__________________")
 
-make_music = False
-save_music = False
-seconds = 0.1
+make_music = True
+save_music = True
+seconds = 3
 
 print("\n")
 print("\n")
