@@ -35,14 +35,12 @@ torch.manual_seed(123)
 data, samplerate = sf.read(r"C:\Users\Matt\Documents\Pytorch_ML\Generative\lofi-orchestra-162306.wav")
 a_before_splitting = pd.DataFrame(data, columns = [col0, col1])
 
-a = a_before_splitting.mean(axis = 0)
-print(a.head)
+a_before_splitting = a_before_splitting.mean(axis = 1).to_frame()
 
 loc = r"C:\Users\Matt\Documents\Pytorch_ML\Generative\songtocsv_singlechannel.csv"
-a = a_before_splitting.iloc[startIdx:endIdx]
+a = a_before_splitting.iloc[startIdx:endIdx,:]
 a.insert(0, 'Time Step', range(len(a)))
-a.to_csv(loc)
-
+print(a)
 
 
 #dataset / loader objects for batching
@@ -54,6 +52,7 @@ class TimeSeriesDataset(Dataset):
         return len(self.data)
 
     def __getitem__(self, idx):
+        
         col = self.data.iloc[idx,:]
         #print(f"col 0 is {col[0]}, col 1 is {col[1]}")#, col 2 is {col[2]}")
         label = torch.tensor(col.iloc[0]).float().to(device)
@@ -119,8 +118,11 @@ class song(nn.Module):
         c1 = torch.zeros(self.num_layers, self.hidden_size*2).float().to(device)
         h2 = torch.zeros(self.num_layers, self.hidden_size*4).float().to(device)
         c2 = torch.zeros(self.num_layers, self.hidden_size*4).float().to(device)
-
+      
         x = x.permute(1, 0)
+        
+        print(x.shape)
+
         x1 = F.relu(self.conv1(x))
         x2 = F.relu(self.conv2(x1))
         x3 = F.relu(self.conv3(x2))
@@ -131,9 +133,8 @@ class song(nn.Module):
 
         # Residual connection
         x_residual = x + x4
-
         #x_residual = x_residual.permute(1, 0)
-        print(x_residual.shape)
+
         x_residual, _ = self.LSTM1(x_residual, (h0, c0))
         x_residual, _ = self.LSTM2(x_residual, (h1, c1))
         x_residual, _ = self.LSTM3(x_residual, (h2, c2))
@@ -193,12 +194,11 @@ for epoch in range(epochs):
     # Print gradient norms
     total_norm = 0
     total = 0
-    print(model.parameters())
+    #print(model.parameters())
 
     for p in model.parameters():
-        #print(p)
         if p.grad is not None:
-            print(p)
+            #print(p)
             param_norm = p.grad.detach().data.norm(2)
             total_norm += param_norm.item() ** 2
     
@@ -234,6 +234,7 @@ datasetTest = TimeSeriesDataset(dataPoints)
 dataLoader = DataLoader(datasetTest, batch_size=batch_size, shuffle=False)
 
 outputs1_list = []
+        
 
 with torch.no_grad():
     for times, label1s in dataLoader:
