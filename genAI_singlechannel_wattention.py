@@ -19,6 +19,12 @@ def scinot(num):
         #print(f"{coefficient}")
     return f"{coefficient:.1e}, e: {exponent}"
 
+def make_divisible(number, divisor):
+  remainder = number % divisor
+  if remainder != 0:
+    number += divisor - remainder
+  return number
+
 #Indecees of start and end values of a array. 
 startIdx = 10000
 endIdx = 50000     
@@ -120,8 +126,8 @@ class song(nn.Module):
         c2 = torch.zeros(self.num_layers, self.hidden_size*4).float().to(device)
       
         x = x.permute(1, 0)
-        
-        print(x.shape)
+
+        #print(x.shape)
 
         x1 = F.relu(self.conv1(x))
         x2 = F.relu(self.conv2(x1))
@@ -173,6 +179,7 @@ for epoch in range(epochs):
     for times, label1 in dataLoader:
         times = times.unsqueeze(-1).to(torch.float32).to(device)
         label1s = label1.unsqueeze(-1).to(torch.float32).to(device)
+        #print(times)
 
         optimizer.zero_grad()
 
@@ -213,7 +220,7 @@ for epoch in range(epochs):
 
     if (epoch + 1) % 1 == 0:  # Print every epoch
         print(f"Epoch [{epoch+1}/{epochs}], Loss: {loss.item():.4f}, Gradient Norm: {total_norm:.4f}")
-        print(f'Error for column 1 is = {accuracy_column1:.2f}% (scientific notation:',scinot(accuracy_column1),')')
+        print(f'Error for column 1 is = {accuracy_column1:.2f}% scientific notation:',scinot(accuracy_column1),')')
         print(f"Learning rate before update: {before_lr}, after update {after_lr}")
         print("\n")
         
@@ -223,7 +230,7 @@ print("_______________TESTING_____________")
 
 
 last = a.index[-1] - a.index[0] + 1
-test_len = 5000         #user set param
+test_len = 5008         #user set param
 
 #print("Last value of a is", last)       #debug
 #dataPoints = np.arange(last, last + test_len) # - changed in next line, delete if works
@@ -234,26 +241,39 @@ datasetTest = TimeSeriesDataset(dataPoints)
 dataLoader = DataLoader(datasetTest, batch_size=batch_size, shuffle=False)
 
 outputs1_list = []
-        
+i=0
 
-with torch.no_grad():
-    for times, label1s in dataLoader:
-        times = times.unsqueeze(-1).to(torch.float32).to(device)
-        label1s = label1s.unsqueeze(-1).to(torch.float32).to(device)
+# Define the testing method
+def test_model(model, dataLoader, criterion, device):
+    model.eval()  # Set the model to evaluation mode
+    total_loss = 0.0
+    total_samples = 0
+    label1_Correct = 0
 
-        outputs1 = model(times)
+    with torch.no_grad():  # Disable gradient calculation
+        for i, (times, label1s) in enumerate(dataLoader):
+            #print("Batch Index: ",i)
+            # Ensure the input data is in the correct shape
+            times = times.unsqueeze(-1).to(torch.float32).to(device)
+            label1s = label1s.unsqueeze(-1).to(torch.float32).to(device)
 
-    total += label1s.size(0)
-    #print(f"DEBUG: size of outputs1 is {outputs1.shape}, size of label1s is {label1s.shape}")
-    label1_Correct += ((torch.pow((outputs1 - label1s), 2)).sum()) / total
-    total_samples += label1s.size(0)
+            # Forward pass
+            outputs1 = model(times)
 
-    # Calculate the accuracy for this epoch
-    accuracy_column1 = 100 * label1_Correct / total_samples
+            # Compute the loss
+            #loss = criterion(outputs1, label1s)
+            #total_loss += loss.item()
 
-    print("\n")
-    print(f'Error for column 1 is = {accuracy_column1:.2f}%')
-    print("\n")
+            # Calculate the accuracy for column 1
+            total_samples += label1s.size(0)
+            label1_Correct += ((torch.pow((outputs1 - label1s), 2)).sum()).item()
+
+        # Compute average loss and accuracy
+        accuracy_column1 = 100 * (1 - (label1_Correct / total_samples))
+
+    print(f'Accuracy for column 1: {accuracy_column1:.2f}%')
+
+test_model(model, dataLoader, criterion, device)
 
 
 
@@ -263,7 +283,10 @@ print("_____________CREATING__________________")
 
 make_music = True
 save_music = True
-seconds = 3
+seconds = 3/16
+inp = seconds * samplerate
+inp = make_divisible(inp, batch_size)
+print(inp)
 
 print("\n")
 print("\n")
@@ -271,8 +294,8 @@ print("\n")
 if make_music:
     print("Make music is true! ")
     last = a.index[-1] - a.index[0] + 1
-    #print("Last value of a is", last)       #debug
-    dataPoints = np.arange(last, last + seconds * samplerate)
+    print("Last value of a is", last,"inp is",inp)       #debug
+    dataPoints = np.arange(last, last + inp)
     dataPoints = pd.DataFrame(dataPoints)
 
     #print("Datapoints head is ", dataPoints.head())                #debug
@@ -292,9 +315,19 @@ if make_music:
 
     dataPoints = dataPoints.to_numpy()       #convert "dataPoints" to usable format
 
-    outputsDF = pd.DataFrame({"Time Step": dataPoints.flatten(), col0: outputs1.flatten()})
+    outputs1 = [item for item in outputs1 for _ in range(batch_size)]
+    outputs1 = torch.tensor(outputs1)
+    print(dataPoints.__len__(),"   ", outputs1.__len__())
+    outputsDF = pd.DataFrame({"Time Step": dataPoints.flatten(), "0": outputs1.flatten()})
     #print("The head of outputsDF is ", outputsDF.head(), "and the size is", outputsDF.size)
-    a = pd.concat([a, outputsDF], ignore_index=True)
+    
+    print("_____________STYLIZING DATA FOR OUTPUT READIBILITY OF OUR SOUNDFILE METHOD__________________")
+
+    
+    outputsDF.columns = a.columns
+    a = pd.concat([a, outputsDF.astype(a.dtypes)], ignore_index=True)
+    a = a.drop(a.columns[0],axis = 1)
+    a = a.astype("float32")
 
     a.to_csv(r"C:\Users\Matt\Documents\Pytorch_ML\Generative\music_example_with_outputs.csv")
 
